@@ -1142,6 +1142,69 @@ class LengowImportOrder
                             'order_line_ids' => [$productData['marketplace_order_line_id']],
                         ];
                     }
+
+                    //[2021-12-29] - (josecarlosphp.com) - Check if we will apply customizations.
+                    $tsxxi_apply_custom = true;
+                    if (($aux = Configuration::get('TSXXI_NO_CUSTOM_LENGOW_MARKETPLACES'))) {
+                        $no_custom_marketplaces = implode(',', str_replace(', ', ',', $aux));
+                        if (in_array($this->marketplace->name, $no_custom_marketplaces)) {
+                            $tsxxi_apply_custom = false;
+                        }
+                    }
+
+                    //[2021-12-29] - (josecarlosphp.com) - Only if apply customizations.
+                    if ($tsxxi_apply_custom) {
+                        //[2021-11-18] - (josecarlosphp.com) - Calculate tax rate
+                        //(we will use it in LengowPaymentModule).
+                        $subtotal = $productData['amount'] + $productData['shipping'];
+                        $subtotal_notax = $subtotal - $productData['tax'];
+                        $tax_rate_noround = (($subtotal * 100) / $subtotal_notax) - 100;
+
+                        //[2021-11-23] - (josecarlosphp.com) - Special case orders from US
+                        /*
+                        Pedido desde US y market amazon_us
+                        Ignorar el tax (como si viniese cero)
+
+                        Pedido desde US y market amazon_uk
+                        Descontar el impuesto de amount, shipping, total_order (...)
+                        Y luego ignorar el tax
+                         */
+                        //Pedido desde US
+                        if ($this->packageData->delivery->common_country_iso_a2 == 'US') {
+                            switch ($this->marketplace->name) {
+                                case 'amazon_de':
+                                case 'amazon_es':
+                                case 'amazon_fr':
+                                case 'amazon_it':
+                                case 'amazon_mx':
+                                case 'amazon_nl':
+                                case 'amazon_uk':
+                                    //Descontar el impuesto de amount, shipping, (...)
+                                    $products[$idFull]['amount'] = $products[$idFull]['amount'] / (1 + ($tax_rate_noround / 100));
+                                    $products[$idFull]['price_unit'] = $products[$idFull]['amount'] / $products[$idFull]['quantity'];
+                                    $this->shippingCost = $this->shippingCost / (1 + ($tax_rate_noround / 100));
+
+                                    //Sigue
+                                case 'amazon_us':
+                                    //Ignorar el tax
+                                    $products[$idFull]['tax_rate'] = 0;
+                                    break;
+                            }
+                        //Pedido no desde US
+                        } else {
+                            include_once dirname(__FILE__) . '/../../../tiendasigloxxi/classes/Logger.php';
+                            include_once dirname(__FILE__) . '/../../../tiendasigloxxi/classes/Cloneable.php';
+                            include_once dirname(__FILE__) . '/../../../tiendasigloxxi/classes/OrderDetailScheme.php';
+                            include_once dirname(__FILE__) . '/../../../tiendasigloxxi/classes/OrderScheme.php';
+
+                            if (class_exists('\tiendasigloxxi\OrderScheme')) {
+                                $products[$idFull]['tax_rate'] = \tiendasigloxxi\OrderScheme::roundTaxRate($tax_rate_noround);
+                            } else {
+                                $products[$idFull]['tax_rate'] = round($tax_rate_noround);
+                            }
+                        }
+                    }
+
                     LengowMain::log(
                         LengowLog::CODE_IMPORT,
                         LengowMain::setLogMessage(
